@@ -6,29 +6,41 @@ import {
   ChevronLeft, 
   ChevronRight, 
   CheckCircle, 
-  XCircle, 
-  AlertCircle 
+  AlertCircle,
+  FileVideo,
+  Image as ImageIcon,
+  Play
 } from 'lucide-react';
-import { FileSystemDirectoryHandle } from './types';
+import { FileSystemDirectoryHandle, FileSystemFileHandle } from './types';
 import Button from './components/Button';
 import Toast from './components/Toast';
 
 const App: React.FC = () => {
-  // State
+  // --- State ---
+  // Video Player State
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
-  const [videoName, setVideoName] = useState<string>("");
-  const [dirHandle, setDirHandle] = useState<FileSystemDirectoryHandle | null>(null);
-  const [fps, setFps] = useState<number>(30);
+  const [currentVideoName, setCurrentVideoName] = useState<string>("");
+  const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [currentTime, setCurrentTime] = useState<number>(0);
   const [duration, setDuration] = useState<number>(0);
+  const [fps, setFps] = useState<number>(30);
+
+  // File System State
+  const [sourceDirHandle, setSourceDirHandle] = useState<FileSystemDirectoryHandle | null>(null);
+  const [saveDirHandle, setSaveDirHandle] = useState<FileSystemDirectoryHandle | null>(null);
+  
+  // Lists
+  const [videoList, setVideoList] = useState<FileSystemFileHandle[]>([]);
+  const [savedFileList, setSavedFileList] = useState<string[]>([]);
+
+  // UI State
   const [toast, setToast] = useState<{ message: string | null; type: 'success' | 'error' }>({ message: null, type: 'success' });
-  const [isPlaying, setIsPlaying] = useState<boolean>(false);
   
   // Refs
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  // Helper: Format Time
+  // --- Helpers ---
   const formatTime = (time: number) => {
     const minutes = Math.floor(time / 60);
     const seconds = Math.floor(time % 60);
@@ -36,49 +48,117 @@ const App: React.FC = () => {
     return `${minutes}:${seconds.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
   };
 
-  // Helper: Show Toast
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
   };
 
-  // 1. File Selection
-  const handleVideoSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      const url = URL.createObjectURL(file);
-      setVideoSrc(url);
-      setVideoName(file.name);
-      // Reset video specific states
-      setCurrentTime(0);
-      setIsPlaying(false);
+  // --- File System Logic ---
+
+  // 1. Scan Directory Helpers
+  const scanForVideos = async (dirHandle: FileSystemDirectoryHandle) => {
+    const videos: FileSystemFileHandle[] = [];
+    // @ts-ignore - values() is async iterable in modern browsers
+    for await (const entry of dirHandle.values()) {
+      if (entry.kind === 'file') {
+        const name = entry.name.toLowerCase();
+        if (name.endsWith('.mp4') || name.endsWith('.mov') || name.endsWith('.webm') || name.endsWith('.mkv')) {
+          videos.push(entry as FileSystemFileHandle);
+        }
+      }
     }
+    // Sort alphabetically
+    return videos.sort((a, b) => a.name.localeCompare(b.name));
   };
 
-  // 2. Directory Selection
-  const handleDirSelect = async () => {
+  const scanForImages = async (dirHandle: FileSystemDirectoryHandle) => {
+    const images: string[] = [];
+    // @ts-ignore
+    for await (const entry of dirHandle.values()) {
+      if (entry.kind === 'file') {
+        const name = entry.name.toLowerCase();
+        if (name.endsWith('.jpg') || name.endsWith('.png')) {
+          images.push(entry.name);
+        }
+      }
+    }
+    // Sort by newest (assuming timestamp in name) or alphabetical
+    return images.sort((a, b) => b.localeCompare(a));
+  };
+
+  // 2. Select Source Directory (Videos)
+  const handleSourceDirSelect = async () => {
     try {
       if ('showDirectoryPicker' in window) {
-        const handle = await window.showDirectoryPicker();
-        setDirHandle(handle);
-        showToast(`Directory selected: ${handle.name}`);
+        const handle = await window.showDirectoryPicker({
+          id: 'video-source',
+          startIn: 'videos'
+        });
+        setSourceDirHandle(handle);
+        
+        const videos = await scanForVideos(handle);
+        setVideoList(videos);
+        
+        showToast(`Found ${videos.length} videos.`);
       } else {
-        showToast("Your browser does not support the File System Access API.", 'error');
+        showToast("Browser not supported.", 'error');
       }
     } catch (err: any) {
-      console.error(err);
-      // Handle User Cancellation
-      if (err.name === 'AbortError') return;
-
-      // Handle Security/Iframe issues common in preview environments
-      if (err.name === 'SecurityError' || err.message?.includes('Cross origin sub frames')) {
-        showToast("Security Block: Open app in a new tab or run locally.", 'error');
-      } else {
-        showToast("Failed to select directory.", 'error');
+      if (err.name !== 'AbortError') {
+        showToast("Error accessing folder.", 'error');
       }
     }
   };
 
-  // 3. Navigation Logic
+  // 3. Select Save Directory
+  const handleSaveDirSelect = async () => {
+    try {
+      if ('showDirectoryPicker' in window) {
+        const handle = await window.showDirectoryPicker({
+          id: 'annotation-output',
+          mode: 'readwrite'
+        });
+        setSaveDirHandle(handle);
+        
+        const images = await scanForImages(handle);
+        setSavedFileList(images);
+        
+        showToast(`Save folder ready.`);
+      }
+    } catch (err: any) {
+      if (err.name !== 'AbortError') {
+         // Handle Security/Iframe issues common in preview environments
+        if (err.name === 'SecurityError' || err.message?.includes('Cross origin sub frames')) {
+            showToast("Security Block: Open app in a new tab.", 'error');
+        } else {
+            showToast("Error accessing folder.", 'error');
+        }
+      }
+    }
+  };
+
+  // 4. Load a Video from List
+  const loadVideo = async (fileHandle: FileSystemFileHandle) => {
+    try {
+      const file = await fileHandle.getFile();
+      
+      // Revoke old URL to prevent memory leaks
+      if (videoSrc) {
+        URL.revokeObjectURL(videoSrc);
+      }
+
+      const url = URL.createObjectURL(file);
+      setVideoSrc(url);
+      setCurrentVideoName(fileHandle.name);
+      setCurrentTime(0);
+      setIsPlaying(false);
+    } catch (err) {
+      console.error(err);
+      showToast("Failed to load video file.", 'error');
+    }
+  };
+
+  // --- Core Functionality ---
+
   const seek = useCallback((direction: 'forward' | 'backward') => {
     if (videoRef.current) {
       videoRef.current.pause();
@@ -91,10 +171,9 @@ const App: React.FC = () => {
     }
   }, [fps]);
 
-  // 4. Capture and Save Logic
   const captureAndSave = useCallback(async (label: 'ball_in' | 'ball_out') => {
-    if (!videoRef.current || !canvasRef.current || !dirHandle) {
-      if (!dirHandle) showToast("Please select a save directory first.", 'error');
+    if (!videoRef.current || !canvasRef.current || !saveDirHandle) {
+      if (!saveDirHandle) showToast("Select a Save Folder first!", 'error');
       return;
     }
 
@@ -102,28 +181,19 @@ const App: React.FC = () => {
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
 
-    // 1. Pause Video
     video.pause();
 
-    // 2. Draw Frame
-    // Ensure canvas matches video dimensions
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     
     if (ctx) {
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       
-      // 3. Convert to Blob
       canvas.toBlob(async (blob) => {
-        if (!blob) {
-          showToast("Failed to capture frame.", 'error');
-          return;
-        }
+        if (!blob) return;
 
         try {
-          // 4. Generate Filename
-          // Clean video name, remove extension
-          const safeVidName = videoName.replace(/\.[^/.]+$/, "").replace(/[^a-z0-9]/gi, '_');
+          const safeVidName = currentVideoName.replace(/\.[^/.]+$/, "").replace(/[^a-z0-9]/gi, '_');
           const timestamp = video.currentTime.toFixed(3);
           const frameNum = Math.round(video.currentTime * fps);
           
@@ -131,65 +201,57 @@ const App: React.FC = () => {
           const imgFilename = `${baseFilename}.jpg`;
           const txtFilename = `${baseFilename}.txt`;
 
-          // 5. Write Image
-          const imgHandle = await dirHandle.getFileHandle(imgFilename, { create: true });
+          // Write Image
+          const imgHandle = await saveDirHandle.getFileHandle(imgFilename, { create: true });
           const imgWritable = await imgHandle.createWritable();
           await imgWritable.write(blob);
           await imgWritable.close();
 
-          // 6. Write Label
-          const txtHandle = await dirHandle.getFileHandle(txtFilename, { create: true });
+          // Write Label
+          const txtHandle = await saveDirHandle.getFileHandle(txtFilename, { create: true });
           const txtWritable = await txtHandle.createWritable();
           await txtWritable.write(label);
           await txtWritable.close();
 
-          showToast(`Saved: ${label.replace('_', ' ').toUpperCase()}`);
+          showToast(`Saved: ${label.toUpperCase()}`);
+          
+          // Refresh Saved List
+          const updatedImages = await scanForImages(saveDirHandle);
+          setSavedFileList(updatedImages);
 
         } catch (err) {
           console.error(err);
-          showToast("Failed to save files. Check permissions.", 'error');
+          showToast("Write failed. Check permissions.", 'error');
         }
 
-      }, 'image/jpeg', 0.95); // High quality JPG
+      }, 'image/jpeg', 0.95);
     }
+  }, [saveDirHandle, currentVideoName, fps]);
 
-  }, [dirHandle, videoName, fps]);
+  // --- Effects ---
 
   // Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Prevent default scrolling for arrows if video is loaded
-      if (['ArrowLeft', 'ArrowRight', ' '].includes(e.key)) {
-        e.preventDefault();
-      }
+      if (['ArrowLeft', 'ArrowRight', ' '].includes(e.key)) e.preventDefault();
 
       switch (e.key) {
-        case 'ArrowLeft':
-          seek('backward');
-          break;
-        case 'ArrowRight':
-          seek('forward');
-          break;
-        case '1':
-          if (!e.repeat) captureAndSave('ball_in');
-          break;
-        case '2':
-          if (!e.repeat) captureAndSave('ball_out');
-          break;
+        case 'ArrowLeft': seek('backward'); break;
+        case 'ArrowRight': seek('forward'); break;
+        case '1': if (!e.repeat) captureAndSave('ball_in'); break;
+        case '2': if (!e.repeat) captureAndSave('ball_out'); break;
         case ' ':
           if (!e.repeat && videoRef.current) {
-            if (videoRef.current.paused) videoRef.current.play();
-            else videoRef.current.pause();
+            videoRef.current.paused ? videoRef.current.play() : videoRef.current.pause();
           }
           break;
       }
     };
-
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [seek, captureAndSave]);
 
-  // Video Event Listeners update loop
+  // Video Event Listeners
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -212,180 +274,187 @@ const App: React.FC = () => {
     };
   }, [videoSrc]);
 
-
   return (
-    <div className="flex flex-col h-screen bg-gray-900 text-gray-100 font-sans">
+    <div className="flex flex-col h-screen bg-gray-950 text-gray-100 font-sans overflow-hidden">
       <Toast message={toast.message} type={toast.type} onClose={() => setToast({ ...toast, message: null })} />
-      
-      {/* Hidden Canvas for Processing */}
       <canvas ref={canvasRef} className="hidden" />
 
-      {/* Header / Controls */}
-      <header className="bg-gray-800 border-b border-gray-700 p-4 shadow-md z-10">
-        <div className="container mx-auto flex flex-wrap items-center justify-between gap-4">
-          
-          <div className="flex items-center gap-2">
-             <div className="p-2 bg-blue-600 rounded-lg">
+      {/* Header */}
+      <header className="bg-gray-900 border-b border-gray-800 p-3 shadow-md z-20 flex-none h-16">
+        <div className="container mx-auto max-w-full px-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+             <div className="p-1.5 bg-blue-600 rounded-lg">
                 <Video className="w-5 h-5 text-white" />
              </div>
-             <div>
-                <h1 className="text-lg font-bold tracking-tight">HoopsLabeler</h1>
-                <p className="text-xs text-gray-400">Video Annotation Tool</p>
-             </div>
+             <h1 className="text-lg font-bold tracking-tight hidden md:block">HoopsLabeler</h1>
           </div>
 
-          <div className="flex flex-1 items-center justify-center gap-4 flex-wrap">
-            {/* Video Input */}
-            <div className="relative group">
-              <input 
-                type="file" 
-                accept="video/*" 
-                onChange={handleVideoSelect} 
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-              />
-              <Button variant="secondary" icon={<FolderOpen size={16} />}>
-                {videoSrc ? "Change Video" : "Select Video"}
-              </Button>
-            </div>
+          <div className="flex items-center gap-4">
+             {/* Directory Selectors */}
+             <div className="flex gap-2">
+                <Button 
+                  onClick={handleSourceDirSelect} 
+                  variant={sourceDirHandle ? "outline" : "secondary"}
+                  className={`text-xs px-3 py-1.5 ${sourceDirHandle ? "border-blue-500/50 text-blue-400 bg-blue-500/10" : ""}`}
+                  icon={<FolderOpen size={14} />}
+                >
+                  {sourceDirHandle ? sourceDirHandle.name : "Select Video Folder"}
+                </Button>
 
-            {/* Directory Input */}
-            <Button 
-              onClick={handleDirSelect} 
-              variant={dirHandle ? "outline" : "secondary"}
-              className={dirHandle ? "border-green-500 text-green-400" : ""}
-              icon={dirHandle ? <CheckCircle size={16} className="text-green-500" /> : <FolderOpen size={16} />}
-            >
-               {dirHandle ? dirHandle.name : "Select Save Folder"}
-            </Button>
+                <Button 
+                  onClick={handleSaveDirSelect} 
+                  variant={saveDirHandle ? "outline" : "secondary"}
+                  className={`text-xs px-3 py-1.5 ${saveDirHandle ? "border-green-500/50 text-green-400 bg-green-500/10" : ""}`}
+                  icon={saveDirHandle ? <CheckCircle size={14} /> : <FolderOpen size={14} />}
+                >
+                   {saveDirHandle ? saveDirHandle.name : "Select Save Folder"}
+                </Button>
+             </div>
 
-            {/* FPS Settings */}
-            <div className="flex items-center gap-2 bg-gray-700 rounded-md px-3 py-1">
-              <Settings size={14} className="text-gray-400" />
-              <label className="text-xs font-semibold text-gray-300 uppercase">FPS</label>
-              <input 
-                type="number" 
-                value={fps} 
-                onChange={(e) => setFps(Number(e.target.value))} 
-                className="w-12 bg-transparent text-center border-b border-gray-500 focus:border-blue-500 focus:outline-none text-sm"
-              />
-            </div>
+             {/* FPS Config */}
+             <div className="flex items-center gap-2 bg-gray-800 rounded px-2 py-1 border border-gray-700">
+                <span className="text-[10px] text-gray-400 font-bold">FPS</span>
+                <input 
+                  type="number" 
+                  value={fps} 
+                  onChange={(e) => setFps(Number(e.target.value))} 
+                  className="w-8 bg-transparent text-center focus:outline-none text-xs"
+                />
+             </div>
           </div>
         </div>
       </header>
 
-      {/* Main Content Area */}
-      <main className="flex-1 flex flex-col items-center justify-center p-6 relative overflow-hidden bg-gray-950">
+      {/* Main Workspace */}
+      <div className="flex flex-1 overflow-hidden">
         
-        {videoSrc ? (
-          <div className="relative w-full max-w-5xl aspect-video bg-black rounded-lg shadow-2xl border border-gray-800 overflow-hidden group">
-            <video 
-              ref={videoRef}
-              src={videoSrc} 
-              className="w-full h-full object-contain"
-              controls={false} // Custom controls
-              playsInline
-            />
-            
-            {/* Current Frame Info Overlay */}
-            <div className="absolute top-4 left-4 bg-black/60 backdrop-blur-sm px-3 py-1.5 rounded-md text-xs font-mono text-white border border-white/10">
-               Time: {formatTime(currentTime)} / {formatTime(duration)}
-               <span className="mx-2 text-gray-500">|</span>
-               Frame: {Math.floor(currentTime * fps)}
-            </div>
+        {/* Left/Center: Video Player */}
+        <div className="flex-1 flex flex-col bg-black relative">
+          
+          <div className="flex-1 flex items-center justify-center p-4">
+            {videoSrc ? (
+              <div className="relative w-full h-full max-h-[80vh] flex items-center justify-center group">
+                <video 
+                  ref={videoRef}
+                  src={videoSrc} 
+                  className="max-w-full max-h-full shadow-2xl"
+                  playsInline
+                />
+                
+                {/* Overlay Info */}
+                <div className="absolute top-4 left-4 bg-black/70 backdrop-blur-sm px-2 py-1 rounded text-xs font-mono text-white border border-white/10">
+                   {formatTime(currentTime)} <span className="text-gray-500">/</span> {formatTime(duration)}
+                   <span className="mx-2 text-gray-500">|</span>
+                   FR: {Math.floor(currentTime * fps)}
+                </div>
 
-            {/* Helper Overlay (Initially visible or on pause) */}
-            {!isPlaying && currentTime === 0 && (
-               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                  <div className="bg-black/40 backdrop-blur-md p-6 rounded-xl border border-white/10 text-center">
-                    <p className="text-gray-300 mb-2">Keyboard Shortcuts</p>
-                    <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm text-left">
-                        <span className="text-gray-400">Seek Left</span> <span className="font-mono text-white">←</span>
-                        <span className="text-gray-400">Seek Right</span> <span className="font-mono text-white">→</span>
-                        <span className="text-gray-400">Play/Pause</span> <span className="font-mono text-white">Space</span>
-                        <span className="text-blue-400 font-bold">Ball In</span> <span className="font-mono text-white">1</span>
-                        <span className="text-red-400 font-bold">Ball Out</span> <span className="font-mono text-white">2</span>
+                {/* Paused Overlay */}
+                {!isPlaying && (
+                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                    <div className="bg-black/50 p-4 rounded-full border border-white/20 backdrop-blur-sm">
+                      <Play className="w-8 h-8 fill-white text-white ml-1" />
                     </div>
                   </div>
-               </div>
+                )}
+              </div>
+            ) : (
+              <div className="text-center text-gray-500">
+                <FileVideo className="w-16 h-16 mx-auto mb-4 opacity-50" />
+                <p>Select a Video Folder to begin</p>
+              </div>
             )}
           </div>
-        ) : (
-          <div className="text-center p-12 border-2 border-dashed border-gray-700 rounded-2xl bg-gray-900/50">
-            <Video className="w-16 h-16 mx-auto text-gray-600 mb-4" />
-            <h3 className="text-xl font-medium text-gray-300">No Video Selected</h3>
-            <p className="text-gray-500 mt-2">Select a video file to start annotating.</p>
-          </div>
-        )}
 
-      </main>
+          {/* Player Controls Bar */}
+          <div className="h-20 bg-gray-900 border-t border-gray-800 flex items-center justify-between px-6 z-10">
+             <div className="flex items-center gap-2">
+                <Button onClick={() => seek('backward')} variant="secondary" className="h-10 w-10 p-0 rounded-full">
+                  <ChevronLeft size={20} />
+                </Button>
+                <span className="text-xs text-gray-500 text-center w-12 leading-tight">1 Frame<br/>Step</span>
+                <Button onClick={() => seek('forward')} variant="secondary" className="h-10 w-10 p-0 rounded-full">
+                  <ChevronRight size={20} />
+                </Button>
+             </div>
 
-      {/* Footer Controls */}
-      <footer className="bg-gray-800 border-t border-gray-700 p-4 pb-6">
-        <div className="container mx-auto max-w-5xl">
-          
-          {/* Timeline / Scrubber Visualization could go here, for now just simple controls */}
-          
-          <div className="flex items-center justify-between gap-6">
-            
-            {/* Seek Controls */}
-            <div className="flex items-center gap-2">
-               <Button onClick={() => seek('backward')} variant="secondary" className="px-3">
-                 <ChevronLeft size={20} />
-               </Button>
-               <div className="text-xs text-center px-2 text-gray-400">
-                  <div className="font-mono">1 frame</div>
-                  <div>step</div>
-               </div>
-               <Button onClick={() => seek('forward')} variant="secondary" className="px-3">
-                 <ChevronRight size={20} />
-               </Button>
-            </div>
-
-            {/* Action Buttons (The Core Requirement) */}
-            <div className="flex items-center gap-4">
-              <div className="flex flex-col items-center">
-                 <Button 
+             <div className="flex items-center gap-4">
+                <Button 
                    onClick={() => captureAndSave('ball_in')} 
-                   variant="success" 
-                   className="w-40 py-3 text-lg font-bold shadow-lg shadow-green-900/20 active:scale-95 transition-transform"
-                   disabled={!dirHandle || !videoSrc}
-                 >
-                   Ball In
-                 </Button>
-                 <span className="text-[10px] text-gray-500 mt-1 font-mono uppercase tracking-wider">Press '1'</span>
-              </div>
-
-              <div className="flex flex-col items-center">
-                 <Button 
+                   disabled={!videoSrc || !saveDirHandle}
+                   className="bg-green-600 hover:bg-green-700 w-32 h-12 text-sm font-bold uppercase tracking-wider disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  Ball In (1)
+                </Button>
+                <Button 
                    onClick={() => captureAndSave('ball_out')} 
-                   variant="danger" 
-                   className="w-40 py-3 text-lg font-bold shadow-lg shadow-red-900/20 active:scale-95 transition-transform"
-                   disabled={!dirHandle || !videoSrc}
-                 >
-                   Ball Out
-                 </Button>
-                 <span className="text-[10px] text-gray-500 mt-1 font-mono uppercase tracking-wider">Press '2'</span>
-              </div>
-            </div>
-
-            {/* Status Indicator */}
-            <div className="flex items-center gap-2 w-32 justify-end">
-               {!dirHandle ? (
-                 <div className="flex items-center text-orange-400 text-xs">
-                    <AlertCircle size={14} className="mr-1" />
-                    <span>No Folder</span>
-                 </div>
-               ) : (
-                 <div className="flex items-center text-green-500 text-xs">
-                    <CheckCircle size={14} className="mr-1" />
-                    <span>Ready</span>
-                 </div>
-               )}
-            </div>
-
+                   disabled={!videoSrc || !saveDirHandle}
+                   className="bg-red-600 hover:bg-red-700 w-32 h-12 text-sm font-bold uppercase tracking-wider disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  Ball Out (2)
+                </Button>
+             </div>
           </div>
         </div>
-      </footer>
+
+        {/* Right Sidebar: Playlist & Output */}
+        <div className="w-80 bg-gray-900 border-l border-gray-800 flex flex-col shadow-xl z-20">
+          
+          {/* Tab 1: Video List */}
+          <div className="flex-1 flex flex-col min-h-0 border-b border-gray-800">
+             <div className="p-3 bg-gray-850 border-b border-gray-800 font-semibold text-xs text-gray-400 uppercase tracking-wider flex justify-between items-center">
+                <span>Playlist</span>
+                <span className="bg-gray-800 px-1.5 py-0.5 rounded text-gray-300">{videoList.length}</span>
+             </div>
+             
+             <div className="overflow-y-auto flex-1 p-2 space-y-1 custom-scrollbar">
+                {videoList.length === 0 ? (
+                  <div className="text-gray-600 text-sm text-center py-8 italic">No videos found</div>
+                ) : (
+                  videoList.map((file, idx) => (
+                    <button
+                      key={file.name}
+                      onClick={() => loadVideo(file)}
+                      className={`w-full text-left px-3 py-2.5 rounded-md text-sm transition-all flex items-start gap-2 ${
+                        currentVideoName === file.name 
+                          ? 'bg-blue-600/20 text-blue-300 border border-blue-600/30' 
+                          : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'
+                      }`}
+                    >
+                      <FileVideo size={16} className={`mt-0.5 shrink-0 ${currentVideoName === file.name ? 'text-blue-400' : 'text-gray-600'}`} />
+                      <span className="truncate w-full">{file.name}</span>
+                    </button>
+                  ))
+                )}
+             </div>
+          </div>
+
+          {/* Tab 2: Saved Files */}
+          <div className="flex-1 flex flex-col min-h-0 bg-gray-900/50">
+             <div className="p-3 bg-gray-850 border-b border-gray-800 font-semibold text-xs text-gray-400 uppercase tracking-wider flex justify-between items-center">
+                <span>Saved Output</span>
+                <span className="bg-gray-800 px-1.5 py-0.5 rounded text-gray-300">{savedFileList.length}</span>
+             </div>
+             
+             <div className="overflow-y-auto flex-1 p-2 space-y-1 custom-scrollbar">
+                {savedFileList.length === 0 ? (
+                  <div className="text-gray-600 text-sm text-center py-8 italic">No annotations yet</div>
+                ) : (
+                  savedFileList.map((filename, idx) => (
+                    <div 
+                      key={idx}
+                      className="px-3 py-2 rounded-md bg-gray-900 border border-gray-800 flex items-center gap-2 text-xs text-gray-400"
+                    >
+                      <ImageIcon size={14} className="text-green-600 shrink-0" />
+                      <span className="truncate">{filename}</span>
+                    </div>
+                  ))
+                )}
+             </div>
+          </div>
+
+        </div>
+
+      </div>
     </div>
   );
 };
