@@ -9,7 +9,9 @@ import {
   AlertCircle,
   FileVideo,
   Image as ImageIcon,
-  Play
+  Play,
+  X,
+  Edit2
 } from 'lucide-react';
 import { FileSystemDirectoryHandle, FileSystemFileHandle } from './types';
 import Button from './components/Button';
@@ -31,7 +33,16 @@ const App: React.FC = () => {
   
   // Lists
   const [videoList, setVideoList] = useState<FileSystemFileHandle[]>([]);
-  const [savedFileList, setSavedFileList] = useState<string[]>([]);
+  // Store handles for images so we can read them later for editing
+  const [savedFileList, setSavedFileList] = useState<FileSystemFileHandle[]>([]);
+
+  // Editing State
+  const [editingItem, setEditingItem] = useState<{
+    imgUrl: string;
+    txtHandle: FileSystemFileHandle;
+    currentLabel: string;
+    filename: string;
+  } | null>(null);
 
   // UI State
   const [toast, setToast] = useState<{ message: string | null; type: 'success' | 'error' }>({ message: null, type: 'success' });
@@ -42,9 +53,11 @@ const App: React.FC = () => {
 
   // --- Helpers ---
   const formatTime = (time: number) => {
-    const minutes = Math.floor(time / 60);
-    const seconds = Math.floor(time % 60);
-    const ms = Math.floor((time % 1) * 100);
+    // Clamp time to avoid 0.51 / 0.40 issues visually
+    const safeTime = Math.max(0, time);
+    const minutes = Math.floor(safeTime / 60);
+    const seconds = Math.floor(safeTime % 60);
+    const ms = Math.floor((safeTime % 1) * 100);
     return `${minutes}:${seconds.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
   };
 
@@ -71,18 +84,18 @@ const App: React.FC = () => {
   };
 
   const scanForImages = async (dirHandle: FileSystemDirectoryHandle) => {
-    const images: string[] = [];
+    const images: FileSystemFileHandle[] = [];
     // @ts-ignore
     for await (const entry of dirHandle.values()) {
       if (entry.kind === 'file') {
         const name = entry.name.toLowerCase();
         if (name.endsWith('.jpg') || name.endsWith('.png')) {
-          images.push(entry.name);
+          images.push(entry as FileSystemFileHandle);
         }
       }
     }
-    // Sort by newest (assuming timestamp in name) or alphabetical
-    return images.sort((a, b) => b.localeCompare(a));
+    // Sort by name (which usually contains timestamp) descending to show newest first
+    return images.sort((a, b) => b.name.localeCompare(a.name));
   };
 
   // 2. Select Source Directory (Videos)
@@ -126,7 +139,6 @@ const App: React.FC = () => {
       }
     } catch (err: any) {
       if (err.name !== 'AbortError') {
-         // Handle Security/Iframe issues common in preview environments
         if (err.name === 'SecurityError' || err.message?.includes('Cross origin sub frames')) {
             showToast("Security Block: Open app in a new tab.", 'error');
         } else {
@@ -141,7 +153,6 @@ const App: React.FC = () => {
     try {
       const file = await fileHandle.getFile();
       
-      // Revoke old URL to prevent memory leaks
       if (videoSrc) {
         URL.revokeObjectURL(videoSrc);
       }
@@ -158,6 +169,16 @@ const App: React.FC = () => {
   };
 
   // --- Core Functionality ---
+
+  const togglePlay = useCallback(() => {
+    if (videoRef.current) {
+      if (videoRef.current.paused) {
+        videoRef.current.play();
+      } else {
+        videoRef.current.pause();
+      }
+    }
+  }, []);
 
   const seek = useCallback((direction: 'forward' | 'backward') => {
     if (videoRef.current) {
@@ -228,11 +249,85 @@ const App: React.FC = () => {
     }
   }, [saveDirHandle, currentVideoName, fps]);
 
+  // --- Edit Modal Logic ---
+
+  const openEditModal = async (imgHandle: FileSystemFileHandle) => {
+    if (!saveDirHandle) return;
+
+    try {
+      // 1. Get Image URL
+      const file = await imgHandle.getFile();
+      const imgUrl = URL.createObjectURL(file);
+
+      // 2. Find Text Handle
+      // Assume convention: name.jpg -> name.txt
+      const txtName = imgHandle.name.replace(/\.(jpg|png)$/i, '.txt');
+      let txtHandle: FileSystemFileHandle;
+      let currentLabel = "Unknown";
+
+      try {
+        txtHandle = await saveDirHandle.getFileHandle(txtName);
+        const txtFile = await txtHandle.getFile();
+        currentLabel = await txtFile.text();
+      } catch (e) {
+        // If text file doesn't exist, create it? Or just warn. 
+        // Let's create a new handle if we can't find it to allow fixing missing labels
+        txtHandle = await saveDirHandle.getFileHandle(txtName, { create: true });
+        currentLabel = "No Label";
+      }
+
+      setEditingItem({
+        imgUrl,
+        txtHandle,
+        currentLabel: currentLabel.trim(),
+        filename: imgHandle.name
+      });
+
+    } catch (err) {
+      console.error(err);
+      showToast("Could not open file details.", 'error');
+    }
+  };
+
+  const closeEditModal = () => {
+    if (editingItem) {
+      URL.revokeObjectURL(editingItem.imgUrl);
+    }
+    setEditingItem(null);
+  };
+
+  const updateLabel = async (newLabel: string) => {
+    if (!editingItem) return;
+    try {
+      const writable = await editingItem.txtHandle.createWritable();
+      await writable.write(newLabel);
+      await writable.close();
+      
+      setEditingItem({
+        ...editingItem,
+        currentLabel: newLabel
+      });
+      showToast(`Updated to: ${newLabel}`);
+      // Don't close immediately so they can see change, or close? 
+      // Let's keep open for verification or close after short delay.
+      setTimeout(closeEditModal, 500);
+
+    } catch (e) {
+      showToast("Failed to update label", 'error');
+    }
+  };
+
   // --- Effects ---
 
   // Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't capture keys if modal is open
+      if (editingItem) {
+         if (e.key === 'Escape') closeEditModal();
+         return;
+      }
+
       if (['ArrowLeft', 'ArrowRight', ' '].includes(e.key)) e.preventDefault();
 
       switch (e.key) {
@@ -241,15 +336,13 @@ const App: React.FC = () => {
         case '1': if (!e.repeat) captureAndSave('ball_in'); break;
         case '2': if (!e.repeat) captureAndSave('ball_out'); break;
         case ' ':
-          if (!e.repeat && videoRef.current) {
-            videoRef.current.paused ? videoRef.current.play() : videoRef.current.pause();
-          }
+          if (!e.repeat) togglePlay();
           break;
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [seek, captureAndSave]);
+  }, [seek, captureAndSave, togglePlay, editingItem]);
 
   // Video Event Listeners
   useEffect(() => {
@@ -257,7 +350,11 @@ const App: React.FC = () => {
     if (!video) return;
 
     const updateTime = () => setCurrentTime(video.currentTime);
-    const updateDuration = () => setDuration(video.duration);
+    const updateDuration = () => {
+       if (video.duration && video.duration !== Infinity) {
+         setDuration(video.duration);
+       }
+    };
     const onPlay = () => setIsPlaying(true);
     const onPause = () => setIsPlaying(false);
 
@@ -333,7 +430,10 @@ const App: React.FC = () => {
           
           <div className="flex-1 flex items-center justify-center p-4">
             {videoSrc ? (
-              <div className="relative w-full h-full max-h-[80vh] flex items-center justify-center group">
+              <div 
+                className="relative w-full h-full max-h-[80vh] flex items-center justify-center group cursor-pointer"
+                onClick={togglePlay}
+              >
                 <video 
                   ref={videoRef}
                   src={videoSrc} 
@@ -342,8 +442,12 @@ const App: React.FC = () => {
                 />
                 
                 {/* Overlay Info */}
-                <div className="absolute top-4 left-4 bg-black/70 backdrop-blur-sm px-2 py-1 rounded text-xs font-mono text-white border border-white/10">
-                   {formatTime(currentTime)} <span className="text-gray-500">/</span> {formatTime(duration)}
+                <div 
+                  className="absolute top-4 left-4 bg-black/70 backdrop-blur-sm px-2 py-1 rounded text-xs font-mono text-white border border-white/10 select-none"
+                  onClick={(e) => e.stopPropagation()} // Prevent clicking info from toggling play
+                >
+                   {/* Clamp current time visually to duration if needed */}
+                   {formatTime(Math.min(currentTime, duration > 0 ? duration : Infinity))} <span className="text-gray-500">/</span> {formatTime(duration)}
                    <span className="mx-2 text-gray-500">|</span>
                    FR: {Math.floor(currentTime * fps)}
                 </div>
@@ -351,7 +455,7 @@ const App: React.FC = () => {
                 {/* Paused Overlay */}
                 {!isPlaying && (
                   <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                    <div className="bg-black/50 p-4 rounded-full border border-white/20 backdrop-blur-sm">
+                    <div className="bg-black/50 p-4 rounded-full border border-white/20 backdrop-blur-sm shadow-xl">
                       <Play className="w-8 h-8 fill-white text-white ml-1" />
                     </div>
                   </div>
@@ -371,7 +475,7 @@ const App: React.FC = () => {
                 <Button onClick={() => seek('backward')} variant="secondary" className="h-10 w-10 p-0 rounded-full">
                   <ChevronLeft size={20} />
                 </Button>
-                <span className="text-xs text-gray-500 text-center w-12 leading-tight">1 Frame<br/>Step</span>
+                <span className="text-xs text-gray-500 text-center w-12 leading-tight select-none">1 Frame<br/>Step</span>
                 <Button onClick={() => seek('forward')} variant="secondary" className="h-10 w-10 p-0 rounded-full">
                   <ChevronRight size={20} />
                 </Button>
@@ -381,14 +485,14 @@ const App: React.FC = () => {
                 <Button 
                    onClick={() => captureAndSave('ball_in')} 
                    disabled={!videoSrc || !saveDirHandle}
-                   className="bg-green-600 hover:bg-green-700 w-32 h-12 text-sm font-bold uppercase tracking-wider disabled:opacity-30 disabled:cursor-not-allowed"
+                   className="bg-green-600 hover:bg-green-700 w-32 h-12 text-sm font-bold uppercase tracking-wider disabled:opacity-30 disabled:cursor-not-allowed shadow-lg hover:shadow-green-900/20"
                 >
                   Ball In (1)
                 </Button>
                 <Button 
                    onClick={() => captureAndSave('ball_out')} 
                    disabled={!videoSrc || !saveDirHandle}
-                   className="bg-red-600 hover:bg-red-700 w-32 h-12 text-sm font-bold uppercase tracking-wider disabled:opacity-30 disabled:cursor-not-allowed"
+                   className="bg-red-600 hover:bg-red-700 w-32 h-12 text-sm font-bold uppercase tracking-wider disabled:opacity-30 disabled:cursor-not-allowed shadow-lg hover:shadow-red-900/20"
                 >
                   Ball Out (2)
                 </Button>
@@ -401,7 +505,7 @@ const App: React.FC = () => {
           
           {/* Tab 1: Video List */}
           <div className="flex-1 flex flex-col min-h-0 border-b border-gray-800">
-             <div className="p-3 bg-gray-850 border-b border-gray-800 font-semibold text-xs text-gray-400 uppercase tracking-wider flex justify-between items-center">
+             <div className="p-3 bg-gray-850 border-b border-gray-800 font-semibold text-xs text-gray-400 uppercase tracking-wider flex justify-between items-center shadow-sm">
                 <span>Playlist</span>
                 <span className="bg-gray-800 px-1.5 py-0.5 rounded text-gray-300">{videoList.length}</span>
              </div>
@@ -414,13 +518,13 @@ const App: React.FC = () => {
                     <button
                       key={file.name}
                       onClick={() => loadVideo(file)}
-                      className={`w-full text-left px-3 py-2.5 rounded-md text-sm transition-all flex items-start gap-2 ${
+                      className={`w-full text-left px-3 py-2.5 rounded-md text-sm transition-all flex items-start gap-2 group ${
                         currentVideoName === file.name 
                           ? 'bg-blue-600/20 text-blue-300 border border-blue-600/30' 
                           : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'
                       }`}
                     >
-                      <FileVideo size={16} className={`mt-0.5 shrink-0 ${currentVideoName === file.name ? 'text-blue-400' : 'text-gray-600'}`} />
+                      <FileVideo size={16} className={`mt-0.5 shrink-0 transition-colors ${currentVideoName === file.name ? 'text-blue-400' : 'text-gray-600 group-hover:text-gray-400'}`} />
                       <span className="truncate w-full">{file.name}</span>
                     </button>
                   ))
@@ -430,7 +534,7 @@ const App: React.FC = () => {
 
           {/* Tab 2: Saved Files */}
           <div className="flex-1 flex flex-col min-h-0 bg-gray-900/50">
-             <div className="p-3 bg-gray-850 border-b border-gray-800 font-semibold text-xs text-gray-400 uppercase tracking-wider flex justify-between items-center">
+             <div className="p-3 bg-gray-850 border-b border-gray-800 font-semibold text-xs text-gray-400 uppercase tracking-wider flex justify-between items-center shadow-sm">
                 <span>Saved Output</span>
                 <span className="bg-gray-800 px-1.5 py-0.5 rounded text-gray-300">{savedFileList.length}</span>
              </div>
@@ -439,22 +543,72 @@ const App: React.FC = () => {
                 {savedFileList.length === 0 ? (
                   <div className="text-gray-600 text-sm text-center py-8 italic">No annotations yet</div>
                 ) : (
-                  savedFileList.map((filename, idx) => (
-                    <div 
+                  savedFileList.map((fileHandle, idx) => (
+                    <button 
                       key={idx}
-                      className="px-3 py-2 rounded-md bg-gray-900 border border-gray-800 flex items-center gap-2 text-xs text-gray-400"
+                      onClick={() => openEditModal(fileHandle)}
+                      className="w-full text-left px-3 py-2 rounded-md hover:bg-gray-800 border border-transparent hover:border-gray-700 flex items-center gap-2 text-xs text-gray-400 transition-colors group"
                     >
-                      <ImageIcon size={14} className="text-green-600 shrink-0" />
-                      <span className="truncate">{filename}</span>
-                    </div>
+                      <div className="bg-gray-800 p-1 rounded text-gray-500 group-hover:text-gray-300">
+                         <ImageIcon size={14} />
+                      </div>
+                      <span className="truncate flex-1">{fileHandle.name}</span>
+                      <Edit2 size={12} className="opacity-0 group-hover:opacity-50" />
+                    </button>
                   ))
                 )}
              </div>
           </div>
 
         </div>
-
       </div>
+
+      {/* Edit Modal Overlay */}
+      {editingItem && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-gray-900 border border-gray-700 rounded-lg shadow-2xl max-w-lg w-full overflow-hidden flex flex-col">
+            
+            <div className="p-3 border-b border-gray-800 flex justify-between items-center bg-gray-850">
+               <h3 className="font-semibold text-sm text-gray-200 truncate pr-4" title={editingItem.filename}>
+                 Edit: {editingItem.filename}
+               </h3>
+               <button onClick={closeEditModal} className="text-gray-500 hover:text-white transition-colors">
+                 <X size={20} />
+               </button>
+            </div>
+
+            <div className="p-6 flex flex-col items-center">
+               <div className="relative rounded-lg overflow-hidden border border-gray-700 mb-6 bg-black">
+                 <img src={editingItem.imgUrl} alt="Frame preview" className="max-h-[50vh] object-contain" />
+                 <div className="absolute bottom-0 inset-x-0 bg-black/60 p-2 text-center backdrop-blur-sm">
+                    <span className="text-xs text-gray-400 uppercase tracking-widest font-bold">Current Label</span>
+                    <div className={`text-lg font-bold ${editingItem.currentLabel.includes('in') ? 'text-green-400' : 'text-red-400'}`}>
+                      {editingItem.currentLabel.toUpperCase()}
+                    </div>
+                 </div>
+               </div>
+
+               <div className="grid grid-cols-2 gap-4 w-full">
+                  <Button 
+                    variant={editingItem.currentLabel === 'ball_in' ? 'primary' : 'outline'}
+                    className={editingItem.currentLabel === 'ball_in' ? 'bg-green-600 hover:bg-green-700 border-transparent' : 'hover:border-green-500 hover:text-green-500'}
+                    onClick={() => updateLabel('ball_in')}
+                  >
+                    Set Ball In
+                  </Button>
+                  <Button 
+                    variant={editingItem.currentLabel === 'ball_out' ? 'primary' : 'outline'}
+                    className={editingItem.currentLabel === 'ball_out' ? 'bg-red-600 hover:bg-red-700 border-transparent' : 'hover:border-red-500 hover:text-red-500'}
+                    onClick={() => updateLabel('ball_out')}
+                  >
+                    Set Ball Out
+                  </Button>
+               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };
