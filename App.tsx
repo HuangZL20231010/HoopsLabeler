@@ -11,11 +11,13 @@ import {
   Image as ImageIcon,
   Play,
   X,
-  Edit2
+  Edit2,
+  HelpCircle
 } from 'lucide-react';
 import { FileSystemDirectoryHandle, FileSystemFileHandle } from './types';
 import Button from './components/Button';
 import Toast from './components/Toast';
+import OnboardingGuide from './components/OnboardingGuide';
 
 const App: React.FC = () => {
   // --- State ---
@@ -46,6 +48,7 @@ const App: React.FC = () => {
 
   // UI State
   const [toast, setToast] = useState<{ message: string | null; type: 'success' | 'error' }>({ message: null, type: 'success' });
+  const [showGuide, setShowGuide] = useState<boolean>(false);
   
   // Refs
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -63,6 +66,23 @@ const App: React.FC = () => {
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
+  };
+
+  // --- Initialization & Guide ---
+  useEffect(() => {
+    const hasSeenGuide = localStorage.getItem('hoops_guide_seen');
+    if (!hasSeenGuide) {
+      setShowGuide(true);
+    }
+  }, []);
+
+  const handleCloseGuide = () => {
+    setShowGuide(false);
+    localStorage.setItem('hoops_guide_seen', 'true');
+  };
+
+  const handleOpenGuide = () => {
+    setShowGuide(true);
   };
 
   // --- File System Logic ---
@@ -308,8 +328,6 @@ const App: React.FC = () => {
         currentLabel: newLabel
       });
       showToast(`Updated to: ${newLabel}`);
-      // Don't close immediately so they can see change, or close? 
-      // Let's keep open for verification or close after short delay.
       setTimeout(closeEditModal, 500);
 
     } catch (e) {
@@ -323,8 +341,11 @@ const App: React.FC = () => {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Don't capture keys if modal is open
-      if (editingItem) {
-         if (e.key === 'Escape') closeEditModal();
+      if (editingItem || showGuide) {
+         if (e.key === 'Escape') {
+             closeEditModal();
+             handleCloseGuide();
+         }
          return;
       }
 
@@ -342,7 +363,7 @@ const App: React.FC = () => {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [seek, captureAndSave, togglePlay, editingItem]);
+  }, [seek, captureAndSave, togglePlay, editingItem, showGuide]);
 
   // Video Event Listeners
   useEffect(() => {
@@ -373,6 +394,7 @@ const App: React.FC = () => {
 
   return (
     <div className="flex flex-col h-screen bg-gray-950 text-gray-100 font-sans overflow-hidden">
+      <OnboardingGuide isOpen={showGuide} onClose={handleCloseGuide} />
       <Toast message={toast.message} type={toast.type} onClose={() => setToast({ ...toast, message: null })} />
       <canvas ref={canvasRef} className="hidden" />
 
@@ -418,6 +440,11 @@ const App: React.FC = () => {
                   className="w-8 bg-transparent text-center focus:outline-none text-xs"
                 />
              </div>
+             
+             {/* Help Button */}
+             <button onClick={handleOpenGuide} className="text-gray-500 hover:text-white transition-colors" title="Guide">
+                 <HelpCircle size={20} />
+             </button>
           </div>
         </div>
       </header>
@@ -441,15 +468,15 @@ const App: React.FC = () => {
                   playsInline
                 />
                 
-                {/* Overlay Info */}
+                {/* Overlay Info - Centered and Enlarged */}
                 <div 
-                  className="absolute top-4 left-4 bg-black/70 backdrop-blur-sm px-2 py-1 rounded text-xs font-mono text-white border border-white/10 select-none"
+                  className="absolute top-8 left-1/2 transform -translate-x-1/2 bg-black/70 backdrop-blur-md px-6 py-3 rounded-xl text-2xl font-mono text-white border border-white/20 select-none shadow-lg z-10"
                   onClick={(e) => e.stopPropagation()} // Prevent clicking info from toggling play
                 >
                    {/* Clamp current time visually to duration if needed */}
                    {formatTime(Math.min(currentTime, duration > 0 ? duration : Infinity))} <span className="text-gray-500">/</span> {formatTime(duration)}
-                   <span className="mx-2 text-gray-500">|</span>
-                   FR: {Math.floor(currentTime * fps)}
+                   <span className="mx-3 text-gray-500">|</span>
+                   <span className="text-blue-400 font-bold">FR: {Math.floor(currentTime * fps)}</span>
                 </div>
 
                 {/* Paused Overlay */}
