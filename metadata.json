@@ -1,0 +1,5 @@
+{
+  "name": "HoopsLabeler",
+  "description": "A client-side video annotation tool for basketball shot data collection. Supports frame-by-frame navigation and direct local file saving.",
+  "requestFramePermissions": []
+}
