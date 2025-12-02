@@ -30,6 +30,13 @@ export interface FileSystemHandle {
   export interface FileSystemCreateWritableOptions {
     keepExistingData?: boolean;
   }
+
+  export interface EditingItem {
+    imgUrl: string;
+    txtHandle: FileSystemFileHandle;
+    currentLabel: string;
+    filename: string;
+  }
   
   // Extend Window to support showDirectoryPicker
   declare global {
