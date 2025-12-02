@@ -64,15 +64,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
               <span className="mx-3 text-gray-500">|</span>
               <span className="text-blue-400 font-bold">FR: {Math.floor(currentTime * fps)}</span>
             </div>
-
-            {/* Paused Overlay */}
-            {!isPlaying && (
-              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                <div className="bg-black/50 p-4 rounded-full border border-white/20 backdrop-blur-sm shadow-xl">
-                  <Play className="w-8 h-8 fill-white text-white ml-1" />
-                </div>
-              </div>
-            )}
           </div>
         ) : (
           <div className="text-center text-gray-500">
