@@ -12,7 +12,8 @@ import {
   Play,
   X,
   Edit2,
-  HelpCircle
+  HelpCircle,
+  Info
 } from 'lucide-react';
 import { FileSystemDirectoryHandle, FileSystemFileHandle } from './types';
 import Button from './components/Button';
@@ -169,16 +170,15 @@ const App: React.FC = () => {
   };
 
   // 4. Load a Video from List
-  const loadVideo = async (fileHandle: FileSystemFileHandle) => {
+  const loadVideo = useCallback(async (fileHandle: FileSystemFileHandle) => {
     try {
       const file = await fileHandle.getFile();
       
-      if (videoSrc) {
-        URL.revokeObjectURL(videoSrc);
-      }
+      setVideoSrc(prev => {
+        if (prev) URL.revokeObjectURL(prev);
+        return URL.createObjectURL(file);
+      });
 
-      const url = URL.createObjectURL(file);
-      setVideoSrc(url);
       setCurrentVideoName(fileHandle.name);
       setCurrentTime(0);
       setIsPlaying(false);
@@ -186,7 +186,7 @@ const App: React.FC = () => {
       console.error(err);
       showToast("Failed to load video file.", 'error');
     }
-  };
+  }, []);
 
   // --- Core Functionality ---
 
@@ -349,11 +349,30 @@ const App: React.FC = () => {
          return;
       }
 
-      if (['ArrowLeft', 'ArrowRight', ' '].includes(e.key)) e.preventDefault();
+      if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', ' '].includes(e.key)) e.preventDefault();
 
       switch (e.key) {
         case 'ArrowLeft': seek('backward'); break;
         case 'ArrowRight': seek('forward'); break;
+        
+        // Playlist Navigation
+        case 'ArrowUp': {
+           const prevIdx = videoList.findIndex(v => v.name === currentVideoName);
+           if (prevIdx > 0) {
+             loadVideo(videoList[prevIdx - 1]);
+           }
+           break;
+        }
+        case 'ArrowDown': {
+           const nextIdx = videoList.findIndex(v => v.name === currentVideoName);
+           if (nextIdx !== -1 && nextIdx < videoList.length - 1) {
+             loadVideo(videoList[nextIdx + 1]);
+           } else if (nextIdx === -1 && videoList.length > 0) {
+             loadVideo(videoList[0]);
+           }
+           break;
+        }
+
         case '1': if (!e.repeat) captureAndSave('ball_in'); break;
         case '2': if (!e.repeat) captureAndSave('ball_out'); break;
         case ' ':
@@ -363,7 +382,7 @@ const App: React.FC = () => {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [seek, captureAndSave, togglePlay, editingItem, showGuide]);
+  }, [seek, captureAndSave, togglePlay, editingItem, showGuide, videoList, currentVideoName, loadVideo]);
 
   // Video Event Listeners
   useEffect(() => {
@@ -496,9 +515,10 @@ const App: React.FC = () => {
             )}
           </div>
 
-          {/* Player Controls Bar */}
-          <div className="h-20 bg-gray-900 border-t border-gray-800 flex items-center justify-between px-6 z-10">
-             <div className="flex items-center gap-2">
+          {/* Player Controls Bar - Centered Action Buttons */}
+          <div className="h-20 bg-gray-900 border-t border-gray-800 flex items-center justify-center relative px-6 z-10">
+             {/* Left Controls (Absolute) */}
+             <div className="absolute left-6 flex items-center gap-2">
                 <Button onClick={() => seek('backward')} variant="secondary" className="h-10 w-10 p-0 rounded-full">
                   <ChevronLeft size={20} />
                 </Button>
@@ -508,6 +528,7 @@ const App: React.FC = () => {
                 </Button>
              </div>
 
+             {/* Center Controls (Ball In/Out) */}
              <div className="flex items-center gap-4">
                 <Button 
                    onClick={() => captureAndSave('ball_in')} 
@@ -530,6 +551,32 @@ const App: React.FC = () => {
         {/* Right Sidebar: Playlist & Output */}
         <div className="w-80 bg-gray-900 border-l border-gray-800 flex flex-col shadow-xl z-20">
           
+          {/* Rules Section (New) */}
+          <div className="p-4 bg-gray-900 border-b border-gray-800 space-y-3">
+            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-2">
+              <Info size={14} className="text-blue-400" /> 标注规则 (Rules)
+            </h3>
+            <div className="text-xs text-gray-300 space-y-2 bg-gray-800/50 p-3 rounded border border-gray-700/50">
+              <p className="flex items-start gap-2 leading-relaxed">
+                <span className="text-blue-400 font-bold shrink-0">1.</span>
+                <span>只需要标注 <span className="text-white font-bold bg-white/10 px-1 rounded">球在篮框附近</span> 的图片</span>
+              </p>
+              <div className="flex items-start gap-2 pt-1 border-t border-gray-700/50 mt-1">
+                <span className="text-blue-400 font-bold shrink-0">2.</span>
+                <div className="space-y-1 w-full">
+                   <p className="text-gray-400 mb-1">快捷键 (Shortcuts):</p>
+                   <div className="grid grid-cols-2 gap-1.5 text-[10px] text-gray-400 font-mono">
+                      <div className="bg-gray-800 px-1.5 py-0.5 rounded border border-gray-700 flex justify-between"><span>In</span> <span className="text-gray-200">1</span></div>
+                      <div className="bg-gray-800 px-1.5 py-0.5 rounded border border-gray-700 flex justify-between"><span>Out</span> <span className="text-gray-200">2</span></div>
+                      <div className="bg-gray-800 px-1.5 py-0.5 rounded border border-gray-700 flex justify-between"><span>Play</span> <span className="text-gray-200">Spc</span></div>
+                      <div className="bg-gray-800 px-1.5 py-0.5 rounded border border-gray-700 flex justify-between"><span>Seek</span> <span className="text-gray-200">←→</span></div>
+                      <div className="col-span-2 bg-gray-800 px-1.5 py-0.5 rounded border border-gray-700 flex justify-between"><span>Switch Video (切换视频)</span> <span className="text-gray-200">↑ ↓</span></div>
+                   </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           {/* Tab 1: Video List */}
           <div className="flex-1 flex flex-col min-h-0 border-b border-gray-800">
              <div className="p-3 bg-gray-850 border-b border-gray-800 font-semibold text-xs text-gray-400 uppercase tracking-wider flex justify-between items-center shadow-sm">
