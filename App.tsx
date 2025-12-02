@@ -8,6 +8,7 @@ import Toast from './components/Toast';
 import OnboardingGuide from './components/OnboardingGuide';
 import VideoPlayer from './components/VideoPlayer';
 import ControlBar from './components/ControlBar';
+import LeftSidebar from './components/LeftSidebar';
 import Sidebar from './components/Sidebar';
 import EditModal from './components/EditModal';
 
@@ -533,8 +534,17 @@ const App: React.FC = () => {
       {/* Main Workspace */}
       <div className="flex flex-1 overflow-hidden">
         
-        {/* Left/Center: Video Player & Controls */}
-        <div className="flex-1 flex flex-col bg-black relative">
+        {/* Left Sidebar: Playlist */}
+        <LeftSidebar
+          videoList={videoList}
+          currentVideoName={currentVideoName}
+          sourceDirHandle={sourceDirHandle}
+          onSelectSource={handleSourceDirSelect}
+          onLoadVideo={loadVideo}
+        />
+
+        {/* Center: Video Player & Controls */}
+        <div className="flex-1 flex flex-col bg-black relative min-w-0">
           <VideoPlayer
             videoRef={videoRef}
             videoSrc={videoSrc}
@@ -554,16 +564,11 @@ const App: React.FC = () => {
           />
         </div>
 
-        {/* Right Sidebar */}
+        {/* Right Sidebar: Rules & Saved */}
         <Sidebar
-          videoList={videoList}
           savedFileList={savedFileList}
-          currentVideoName={currentVideoName}
-          sourceDirHandle={sourceDirHandle}
           saveDirHandle={saveDirHandle}
-          onSelectSource={handleSourceDirSelect}
           onSelectSave={handleSaveDirSelect}
-          onLoadVideo={loadVideo}
           onEditFile={openEditModal}
         />
       </div>
