@@ -57,13 +57,16 @@ const Sidebar: React.FC<SidebarProps> = ({
                   <span>Out</span> <span className="text-gray-200 font-bold">2</span>
                 </div>
                 <div className="bg-gray-800 px-2 py-1 rounded border border-gray-700 flex justify-between items-center">
-                  <span>Play</span> <span className="text-gray-200 font-bold">Spc</span>
+                  <span>Delete</span> <span className="text-gray-200 font-bold">3</span>
                 </div>
                 <div className="bg-gray-800 px-2 py-1 rounded border border-gray-700 flex justify-between items-center">
-                  <span>Seek</span> <span className="text-gray-200 font-bold">←→</span>
+                  <span>Play</span> <span className="text-gray-200 font-bold">Spc</span>
                 </div>
                 <div className="col-span-2 bg-gray-800 px-2 py-1 rounded border border-gray-700 flex justify-between items-center">
                   <span>Switch Video</span> <span className="text-gray-200 font-bold">↑ ↓</span>
+                </div>
+                 <div className="col-span-2 bg-gray-800 px-2 py-1 rounded border border-gray-700 flex justify-between items-center">
+                  <span>Seek</span> <span className="text-gray-200 font-bold">← →</span>
                 </div>
               </div>
             </div>

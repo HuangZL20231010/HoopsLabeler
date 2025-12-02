@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { FolderOpen, AlertCircle, FileVideo } from 'lucide-react';
 import { FileSystemDirectoryHandle, FileSystemFileHandle } from '../types';
 
@@ -17,6 +17,15 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
   onSelectSource,
   onLoadVideo,
 }) => {
+  const activeVideoRef = useRef<HTMLButtonElement>(null);
+
+  // Auto-scroll to the active video when it changes
+  useEffect(() => {
+    if (activeVideoRef.current) {
+      activeVideoRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [currentVideoName]);
+
   return (
     <div className="w-64 bg-gray-900 border-r border-gray-800 flex flex-col shadow-xl z-20 flex-shrink-0">
       {/* Header / Select Button */}
@@ -51,6 +60,7 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
           videoList.map((file) => (
             <button
               key={file.name}
+              ref={currentVideoName === file.name ? activeVideoRef : null}
               onClick={() => onLoadVideo(file)}
               className={`w-full text-left px-3 py-2.5 rounded-md text-sm transition-all flex items-start gap-2 group ${
                 currentVideoName === file.name

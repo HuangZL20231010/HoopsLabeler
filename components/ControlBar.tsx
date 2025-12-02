@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Trash2 } from 'lucide-react';
 import Button from './Button';
 
 interface ControlBarProps {
@@ -7,6 +7,8 @@ interface ControlBarProps {
   onCapture: (label: 'ball_in' | 'ball_out') => void;
   isVideoLoaded: boolean;
   isSaveReady: boolean;
+  currentLabel: string | null;
+  onDelete: () => void;
 }
 
 const ControlBar: React.FC<ControlBarProps> = ({
@@ -14,6 +16,8 @@ const ControlBar: React.FC<ControlBarProps> = ({
   onCapture,
   isVideoLoaded,
   isSaveReady,
+  currentLabel,
+  onDelete,
 }) => {
   return (
     <div className="h-20 bg-gray-900 border-t border-gray-800 flex items-center justify-center relative px-6 z-10">
@@ -46,6 +50,16 @@ const ControlBar: React.FC<ControlBarProps> = ({
         >
           Ball Out (2)
         </Button>
+
+        {currentLabel && (
+          <Button
+            onClick={onDelete}
+            className="bg-gray-800 hover:bg-red-900/80 hover:text-red-200 border border-gray-700 text-gray-300 w-32 h-12 text-sm font-bold uppercase tracking-wider shadow-lg flex items-center gap-2 animate-fade-in"
+          >
+            <Trash2 size={16} />
+            Delete (3)
+          </Button>
+        )}
       </div>
     </div>
   );

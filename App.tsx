@@ -316,6 +316,45 @@ const App: React.FC = () => {
     }
   }, [saveDirHandle, currentVideoName, fps]);
 
+  // --- Deletion Logic ---
+
+  const handleQuickDelete = useCallback(async () => {
+      if (!saveDirHandle) return;
+      const frameNum = Math.round(currentTime * fps);
+      
+      if (!currentVideoAnnotations.has(frameNum)) {
+          showToast("No annotation to delete on this frame", "error");
+          return;
+      }
+
+      const imgHandle = currentVideoAnnotations.get(frameNum)!;
+      const imgName = imgHandle.name;
+
+      try {
+          // Delete Image
+          await saveDirHandle.removeEntry(imgName);
+          
+          // Delete Text (try/catch in case it's missing)
+          const txtName = imgName.replace(/\.(jpg|png)$/i, '.txt');
+          try { 
+              await saveDirHandle.removeEntry(txtName); 
+          } catch(e) { /* ignore */ }
+
+          // Update Cache & State
+          labelCache.current.delete(imgName);
+          setCurrentFrameLabel(null);
+          showToast("Annotation Deleted");
+
+          // Refresh List
+          const updatedImages = await scanForImages(saveDirHandle);
+          setSavedFileList(updatedImages);
+      } catch (e) {
+          console.error(e);
+          showToast("Delete failed", 'error');
+      }
+  }, [saveDirHandle, currentTime, fps, currentVideoAnnotations, scanForImages]);
+
+
   // --- Edit Modal Logic ---
 
   const openEditModal = async (imgHandle: FileSystemFileHandle) => {
@@ -459,6 +498,7 @@ const App: React.FC = () => {
 
         case '1': if (!e.repeat) captureAndSave('ball_in'); break;
         case '2': if (!e.repeat) captureAndSave('ball_out'); break;
+        case '3': if (!e.repeat) handleQuickDelete(); break; // New shortcut
         case ' ':
           if (!e.repeat) togglePlay();
           break;
@@ -466,7 +506,7 @@ const App: React.FC = () => {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [seek, captureAndSave, togglePlay, editingItem, showGuide, videoList, currentVideoName, loadVideo]);
+  }, [seek, captureAndSave, togglePlay, editingItem, showGuide, videoList, currentVideoName, loadVideo, handleQuickDelete]);
 
   // Video Event Listeners
   useEffect(() => {
@@ -561,6 +601,8 @@ const App: React.FC = () => {
             onCapture={captureAndSave}
             isVideoLoaded={!!videoSrc}
             isSaveReady={!!saveDirHandle}
+            currentLabel={currentFrameLabel}
+            onDelete={handleQuickDelete}
           />
         </div>
 
