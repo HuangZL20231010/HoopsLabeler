@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { 
   Video, 
   HelpCircle 
@@ -20,6 +20,7 @@ const App: React.FC = () => {
   const [currentTime, setCurrentTime] = useState<number>(0);
   const [duration, setDuration] = useState<number>(0);
   const [fps, setFps] = useState<number>(30);
+  const [currentFrameLabel, setCurrentFrameLabel] = useState<string | null>(null);
 
   // File System State
   const [sourceDirHandle, setSourceDirHandle] = useState<FileSystemDirectoryHandle | null>(null);
@@ -40,6 +41,7 @@ const App: React.FC = () => {
   // Refs
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const labelCache = useRef<Map<string, string>>(new Map()); // cache filename -> label content
 
   // --- Helpers ---
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
@@ -159,11 +161,75 @@ const App: React.FC = () => {
       setCurrentVideoName(fileHandle.name);
       setCurrentTime(0);
       setIsPlaying(false);
+      setCurrentFrameLabel(null);
     } catch (err) {
       console.error(err);
       showToast("Failed to load video file.", 'error');
     }
   }, []);
+
+  // --- Real-time Annotation Check ---
+
+  // Build an index of frame numbers for the current video
+  // Format: FrameNumber -> FileSystemFileHandle (Image)
+  const currentVideoAnnotations = useMemo(() => {
+    const map = new Map<number, FileSystemFileHandle>();
+    if (!currentVideoName) return map;
+
+    // Sanitize video name for regex matching (escape dots)
+    const safeVidName = currentVideoName.replace(/\.[^/.]+$/, "").replace(/[^a-z0-9]/gi, '_');
+    
+    savedFileList.forEach(handle => {
+        // Filename format: {safeVidName}_frame{frameNum}_{timestamp}s.jpg
+        if (handle.name.startsWith(safeVidName)) {
+            const match = handle.name.match(/_frame(\d+)_/);
+            if (match && match[1]) {
+                const frameNum = parseInt(match[1], 10);
+                map.set(frameNum, handle);
+            }
+        }
+    });
+    return map;
+  }, [savedFileList, currentVideoName]);
+
+  // Check if current frame has an annotation
+  useEffect(() => {
+      const checkAnnotation = async () => {
+          const currentFrame = Math.round(currentTime * fps);
+          
+          if (currentVideoAnnotations.has(currentFrame)) {
+              const imgHandle = currentVideoAnnotations.get(currentFrame)!;
+              
+              // Check cache first
+              if (labelCache.current.has(imgHandle.name)) {
+                  setCurrentFrameLabel(labelCache.current.get(imgHandle.name)!);
+                  return;
+              }
+
+              // Read file if not cached
+              try {
+                  if (saveDirHandle) {
+                      const txtName = imgHandle.name.replace(/\.(jpg|png)$/i, '.txt');
+                      const txtHandle = await saveDirHandle.getFileHandle(txtName);
+                      const file = await txtHandle.getFile();
+                      const text = await file.text();
+                      const label = text.trim();
+                      
+                      labelCache.current.set(imgHandle.name, label);
+                      setCurrentFrameLabel(label);
+                  }
+              } catch (e) {
+                  // Fallback if txt missing
+                  setCurrentFrameLabel('marked');
+              }
+          } else {
+              setCurrentFrameLabel(null);
+          }
+      };
+
+      checkAnnotation();
+  }, [currentTime, fps, currentVideoAnnotations, saveDirHandle]);
+
 
   // --- Core Functionality ---
 
@@ -231,6 +297,9 @@ const App: React.FC = () => {
           await txtWritable.write(label);
           await txtWritable.close();
 
+          // Update cache immediately
+          labelCache.current.set(imgFilename, label);
+
           showToast(`Saved: ${label.toUpperCase()}`);
           
           // Refresh Saved List
@@ -257,7 +326,6 @@ const App: React.FC = () => {
       const imgUrl = URL.createObjectURL(file);
 
       // 2. Find Text Handle
-      // Assume convention: name.jpg -> name.txt
       const txtName = imgHandle.name.replace(/\.(jpg|png)$/i, '.txt');
       let txtHandle: FileSystemFileHandle;
       let currentLabel = "Unknown";
@@ -267,8 +335,6 @@ const App: React.FC = () => {
         const txtFile = await txtHandle.getFile();
         currentLabel = await txtFile.text();
       } catch (e) {
-        // If text file doesn't exist, create it? Or just warn. 
-        // Let's create a new handle if we can't find it to allow fixing missing labels
         txtHandle = await saveDirHandle.getFileHandle(txtName, { create: true });
         currentLabel = "No Label";
       }
@@ -304,12 +370,52 @@ const App: React.FC = () => {
         ...editingItem,
         currentLabel: newLabel
       });
+      
+      // Update cache
+      labelCache.current.set(editingItem.filename, newLabel);
+      // Force overlay update if on same frame
+      setCurrentFrameLabel(newLabel);
+
       showToast(`Updated to: ${newLabel}`);
       setTimeout(closeEditModal, 500);
 
     } catch (e) {
       showToast("Failed to update label", 'error');
     }
+  };
+
+  const handleDeleteAnnotation = async () => {
+      if (!editingItem || !saveDirHandle) return;
+
+      if (!confirm("Are you sure you want to delete this annotation? This cannot be undone.")) {
+          return;
+      }
+
+      try {
+          // Delete Image
+          await saveDirHandle.removeEntry(editingItem.filename);
+          
+          // Delete Text
+          const txtName = editingItem.filename.replace(/\.(jpg|png)$/i, '.txt');
+          try {
+              await saveDirHandle.removeEntry(txtName);
+          } catch(e) {
+              console.warn("Text file not found or already deleted");
+          }
+
+          // Cleanup UI
+          labelCache.current.delete(editingItem.filename);
+          showToast("Annotation Deleted");
+          closeEditModal();
+
+          // Refresh List
+          const updatedImages = await scanForImages(saveDirHandle);
+          setSavedFileList(updatedImages);
+
+      } catch(e) {
+          console.error(e);
+          showToast("Failed to delete file", 'error');
+      }
   };
 
   // --- Effects ---
@@ -436,6 +542,7 @@ const App: React.FC = () => {
             currentTime={currentTime}
             duration={duration}
             fps={fps}
+            currentLabel={currentFrameLabel}
             onTogglePlay={togglePlay}
           />
           
@@ -466,6 +573,7 @@ const App: React.FC = () => {
         item={editingItem} 
         onClose={closeEditModal} 
         onUpdateLabel={updateLabel} 
+        onDelete={handleDeleteAnnotation}
       />
     </div>
   );

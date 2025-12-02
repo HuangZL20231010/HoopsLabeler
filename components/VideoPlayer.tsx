@@ -8,6 +8,7 @@ interface VideoPlayerProps {
   currentTime: number;
   duration: number;
   fps: number;
+  currentLabel?: string | null;
   onTogglePlay: () => void;
 }
 
@@ -18,6 +19,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   currentTime,
   duration,
   fps,
+  currentLabel,
   onTogglePlay,
 }) => {
   const formatTime = (time: number) => {
@@ -43,7 +45,16 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
               playsInline
             />
 
-            {/* Overlay Info - Centered and Enlarged */}
+            {/* Current Label Overlay */}
+            {currentLabel && (
+              <div className={`absolute top-8 right-8 px-6 py-2 rounded-lg text-white font-bold text-xl shadow-lg animate-fade-in z-20 uppercase tracking-wider border border-white/20 backdrop-blur-md ${
+                currentLabel === 'ball_in' ? 'bg-green-600/90' : 'bg-red-600/90'
+              }`}>
+                {currentLabel.replace('_', ' ')}
+              </div>
+            )}
+
+            {/* Time/FPS Info - Centered and Enlarged */}
             <div
               className="absolute top-8 left-1/2 transform -translate-x-1/2 bg-black/70 backdrop-blur-md px-6 py-3 rounded-xl text-2xl font-mono text-white border border-white/20 select-none shadow-lg z-10"
               onClick={(e) => e.stopPropagation()}

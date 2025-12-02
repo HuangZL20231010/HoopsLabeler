@@ -1,5 +1,5 @@
 import React from 'react';
-import { X } from 'lucide-react';
+import { X, Trash2 } from 'lucide-react';
 import Button from './Button';
 import { EditingItem } from '../types';
 
@@ -7,9 +7,10 @@ interface EditModalProps {
   item: EditingItem | null;
   onClose: () => void;
   onUpdateLabel: (label: string) => void;
+  onDelete: () => void;
 }
 
-const EditModal: React.FC<EditModalProps> = ({ item, onClose, onUpdateLabel }) => {
+const EditModal: React.FC<EditModalProps> = ({ item, onClose, onUpdateLabel, onDelete }) => {
   if (!item) return null;
 
   return (
@@ -25,11 +26,11 @@ const EditModal: React.FC<EditModalProps> = ({ item, onClose, onUpdateLabel }) =
         </div>
 
         <div className="p-6 flex flex-col items-center">
-          <div className="relative rounded-lg overflow-hidden border border-gray-700 mb-6 bg-black">
+          <div className="relative rounded-lg overflow-hidden border border-gray-700 mb-6 bg-black w-full flex justify-center">
             <img
               src={item.imgUrl}
               alt="Frame preview"
-              className="max-h-[50vh] object-contain"
+              className="max-h-[40vh] object-contain"
             />
             <div className="absolute bottom-0 inset-x-0 bg-black/60 p-2 text-center backdrop-blur-sm">
               <span className="text-xs text-gray-400 uppercase tracking-widest font-bold">
@@ -45,7 +46,7 @@ const EditModal: React.FC<EditModalProps> = ({ item, onClose, onUpdateLabel }) =
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4 w-full">
+          <div className="grid grid-cols-2 gap-4 w-full mb-6">
             <Button
               variant={item.currentLabel === 'ball_in' ? 'primary' : 'outline'}
               className={
@@ -67,6 +68,17 @@ const EditModal: React.FC<EditModalProps> = ({ item, onClose, onUpdateLabel }) =
               onClick={() => onUpdateLabel('ball_out')}
             >
               Set Ball Out
+            </Button>
+          </div>
+
+          <div className="w-full border-t border-gray-800 pt-4 flex justify-end">
+            <Button 
+              variant="danger" 
+              onClick={onDelete}
+              className="w-full sm:w-auto bg-red-900/50 hover:bg-red-800 text-red-200 border border-red-800"
+              icon={<Trash2 size={16} />}
+            >
+              Delete Annotation
             </Button>
           </div>
         </div>
